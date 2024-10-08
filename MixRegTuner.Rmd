@@ -1,0 +1,282 @@
+# Generate DATA:
+
+```{r}
+n <- 1000 # Number of samples
+k <- 4 # Number of features (Not counting the intercept)
+```
+
+```{r}
+set.seed(20)
+library(mvtnorm)
+X <- matrix(data = NA, nrow = n, ncol = k)
+X <- rmvnorm(n, mean = c(1,4,6,2))
+intercept = TRUE
+if (intercept){
+  X <- cbind(rep(1,n), X)
+  k <- k+1
+}
+```
+
+The coefficients $\beta_0, \dots, \beta_k$ for the linear predictor are chosen as follows,
+
+$$
+\mu  = 3X_{intercept} + 19X_1 + 4X_2 + 9X_3 + 12X_4 \quad \text{or} \quad \mu  = 19X_1 + 4X_2 + 9X_3 + 12X_4
+$$
+
+```{r}
+if (intercept) {beta <- matrix(c(3, 19, 4, 9, 12), ncol = 1)
+}else {beta <- matrix(c(19, 4, 9, 12), ncol = 1)}
+
+#beta <- matrix(c(19,4,9,12), ncol = 1)
+mu <- X %*% beta
+```
+
+For the choice of $\eta_1,\eta_2 \text{ and } \phi$ we use a randomly generated sample form the Dirichlet distribution
+
+```{r}
+library(DirichletReg)
+#etaphi <- sqrt(rdirichlet(1,c(.5,.5,.5)))
+etaphi <- c(0.149, 0.406, sqrt(0.813))
+eta1 <- etaphi[1]
+eta2 <- etaphi[2]
+phi <- etaphi[3]
+```
+
+The last parameters to be chosen are the mixture weight $p$ and the standard deviation $\sigma$
+
+```{r}
+p <- 0.2
+sd <- 100
+sigma <- matrix(data = rep(sd, n), ncol = 1)
+```
+
+Using all the previous parameters we compute the parameters of the mixture
+
+```{r}
+mu1 <- mu - sigma * phi * (sqrt(1-p)/sqrt(p))
+mu2 <- mu + sigma * phi * (sqrt(p)/sqrt(1-p))
+sigma1 <- sigma * (eta1/ sqrt(p))
+sigma2 <- sigma * (eta2/sqrt(1-p))
+
+source("rnormix.R")
+#set.seed(20)
+Y <- rnormix(n, p, mu1, sigma1, mu2, sigma2)$samples
+Y_mean <- rnormix(n,p, mean(mu1), mean(sigma1), mean(mu2), mean(sigma2))$samples
+```
+
+```{r}
+library(ggplot2)
+ggplot()+
+  geom_histogram(aes(Y), bins = 90, fill = "blue", alpha = .5) +
+  geom_histogram(aes(Y_mean), bins = 90, fill = "green", alpha = .5) +
+  ggtitle("Histogram of Y")
+
+
+```
+
+# Parameters
+
+```{r}
+Tau <- list("tau1"=.5, "tau2"=.5) # Mixture weights
+Alpha <- c(.5,.5,.5) # eta1, eta2, phi
+ksi <- list("shape"=1.5, "rate"=2) # Standard deviation
+beta_MLE <- solve(t(X)%*%X)%*%t(X)%*%Y
+beta_hat <- matrix(beta_MLE, ncol = 1) # Mean 
+```
+
+# Sampling
+
+```{r}
+T = 1000 # Sampling epochs
+# T_adapt = 100 # Adaptation epochs
+# N_chains = 30
+# TempMin = 0.001
+# TempMax = 1
+```
+
+```{r}
+source("FactoredMixReg.R")
+Rprof("myProfile.out")  # Start profiling
+L = MixReg_factor(T, X, Y, Tau, Alpha, ksi, beta_hat, 1)
+Rprof(NULL)             # Stop profiling
+summaryRprof("myProfile.out")  # Summarize results
+```
+
+```{r}
+plot(L$ac_rate_p[1,],type = "l")
+hist(L$P[1,100:dim(L$P)[2]])
+plot(L$ac_rate_etaPhi_sqrd[1,], type = "l")
+plot(L$etaPhi[1,100:dim(L$P)[2],3], type = "l")
+plot(L$ac_rate_sigma_sqrd[1,], type = "l")
+plot(sqrt(L$sigma_sqrd[1,]), type = "l")
+plot(L$ac_rate_beta[1,],type = "l")
+
+for (i in 1:dim(L$Beta_chains)[3]){
+  plot(L$Beta_chains[1,,i], type = "l")
+}
+
+
+colMeans(colMeans(L$Beta_chains))
+```
+
+```{r}
+source("MixReg.R")
+#Temperature = seq(TempMin,TempMax, length.out = N_chains)
+Temperature <- c(1,0.5^c(seq(1,4)))
+Res <- list()
+for (i in 1:length(Temperature)){
+  success <- FALSE  # Flag to track success
+  
+  while (!success) {
+    print(i)
+    success <- tryCatch(
+      {
+        Res[[i]] = MixReg_factor(T, X, Y, Tau, Alpha, ksi, beta_hat, Temperature[i])
+        TRUE
+      },
+      error = function(e) {
+        cat("An error occurred. Retrying...")
+        FALSE  
+      }
+    )
+  }
+  cat("Success! The loop completed without errors.\n")
+}
+
+```
+
+## Mixture weights P:
+
+### Chains:
+
+```{r}
+j <- 1
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$P[i,100:dim(Res[[j]]$P)[2]], type = "l", ylim = c(0,1), xlab = "p")
+```
+
+```{r}
+for (i in 1:Res[[j]]$N_chains)
+  hist(Res[[j]]$samples$P[i,1000:dim(Res[[j]]$samples$P)[2]],nclass = 100, xlim = c(0,1))
+```
+
+### Acceptance rates:
+
+```{r}
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$acceptance$P[i,1:dim(Res[[j]]$acceptance$P)[2]], type = "l", ylim = c(0,1))
+Res[[j]]$eps$P
+```
+
+### Sigma:
+
+#### Chains:
+
+```{r}
+j <- 1
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$sigma[i,100:dim(Res[[j]]$sigma)[2]], type = "l", ylab = "sigma")
+```
+
+## Phi:
+
+### Chains:
+
+```{r}
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$acceptance$etaPhi[i,], type = "l", ylim = c(0,1))
+Res[[j]]$eps$etaphi
+```
+
+## \#
+
+```{r}
+for (i in 1:Res[[j]]$N_chains){
+  plot(Res[[j]]$etaPhi[i,100:dim(Res[[j]]$etaPhi)[2],3], type = "l", ylim = c(-1,1))
+  abline(h=phi, col = "red")
+  abline(h=-phi, col = "red")
+}
+```
+
+```{r}
+# for (i in 1:Res$N_chains){
+#   hist(Res$samples$etaPhi[i,1000:dim(Res$samples$etaPhi)[2],component], nclass = 500, xlim = c(-1,1))
+#   if (component != 3){
+#       abline(v=etaphi[1], col = "red")
+#       abline(v=etaphi[2], col = "red")
+#   }
+#   else{
+#       abline(v=etaphi[component], col = "red")
+#       abline(v=-etaphi[component], col = "red")
+#   }
+# }
+# Res$eps$etaphi
+component <- 2
+for (i in 1:Res[[j]]$N_chains)
+  hist(Res[[j]]$etaPhi[i,100:dim(Res[[j]]$etaPhi)[2],component],nclass = 100, xlim = c(0,1))
+```
+
+```{r}
+j <- 1
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$etaPhi[i,100:dim(Res[[j]]$etaPhi)[2],component], type = "l", ylim = c(0,1), xlab = "p")
+```
+
+## Beta
+
+#### Acceptance
+
+```{r}
+for (i in 1:Res[[j]]$N_chains)
+  plot(Res[[j]]$acceptance$beta[i,], type = "l", ylim = c(0,1))
+Res[[j]]$eps$beta
+```
+
+```{r}
+#View(Res$samples$beta[,1000,])
+A <- apply(Res[[j]]$beta[,400:dim(Res[[j]]$beta)[2],], 3, FUN = rowMeans)
+
+weight = 1
+for (i in 1:Res[[j]]$N_chains){
+  plot(Res[[j]]$samples$beta[i,1000:dim(Res[[j]]$samples$beta)[2],weight], type = "l")
+  abline(h=beta[weight], col = "red")
+}
+beta
+beta_MLE
+Res$eps$beta
+```
+
+```{r}
+library(coda)
+gelman <- numeric(length = length(Res))
+L <- list()
+for(j in 1:(length(Res)-1)){
+  chain_list <- list()
+  for (i in 1:Res[[j]]$N_chains){
+    chain <- mcmc(cbind(as.matrix(Res[[j]]$samples$P[i,]), Res[[j]]$samples$etaPhi[i,,], as.matrix(Res[[j]]$samples$sigma[i,]), Res[[j]]$samples$beta[i,,]))
+    chain_list[[i]] <- chain
+  }
+  L[[j]] <- mcmc.list(chain_list)
+  gelman[j] <- gelman.diag(L[[j]])$mpsrf
+}
+gelman
+traceplot(L[[j]][2])
+```
+
+```{r}
+gelman.plot(L[[j]], autoburnin = TRUE )
+
+```
+
+```{r}
+gelman.diag(L[[j]])
+```
+
+```{r}
+chain <- L[[j]][[2]]
+beta_pred <- matrix(colMeans(apply(Res[[j]]$samples$beta[,400:dim(Res[[j]]$samples$beta)[2],], 3, FUN = rowMeans)), ncol = 1)
+mu1 <-  X %*% beta_pred - matrix(chain[,5], ncol = 1) * matrix(chain[,4], ncol = 1) * (sqrt(1-matrix(chain[,1], ncol = 1))/sqrt(matrix(chain[,1], ncol = 1)))
+mu2 <- X %*% beta_pred + matrix(chain[,5] * matrix(chain[,4] * (sqrt(matrix(chain[,1])/sqrt(1-matrix(chain[,1]))
+sigma1 <- matrix(chain[,4] * (matrix(chain[,2]/ sqrt(matrix(chain[,1]))
+sigma2 <- matrix(chain[,4] * (matrix(chain[,3]/sqrt(1-matrix(chain[,1]))
+```

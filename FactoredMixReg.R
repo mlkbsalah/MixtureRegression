@@ -5,31 +5,26 @@ library(progress)
 source("MH_Samplers.R")
 source("Model.R")
 library(invgamma)
+library(mvtnorm)
+library(DirichletReg)
+source("utilities.R")
 
-check_adaptation <- function(i, j, acceptance_rate , adaptation_config){
-  ac_rate_lower <- adaptation_config$ac_rate_lower
-  ac_rate_upper <- adaptation_config$ac_rate_upper
-  cycle_period <- adaptation_config$cycle_period
-  if ((i%%cycle_period==0) && ((mean(acceptance_rate[j,(i-cycle_period/2):i])>ac_rate_upper) || (mean(acceptance_rate[j,(i-cycle_period/2):i])<ac_rate_lower))) return(TRUE)
-  else return(FALSE)
-}
-
+options(warn=2)
 
 MixReg_factor <- function(T, X, Y, Tau, Alpha, ksi, beta_hat, core_temperature) {
-  pb <- progress_bar$new(format = ":percent |:bar|  :current/:total  [:elapsed <:eta,  :tick_rateit/s]",
-                         total = T,
-                         complete = "█",   # Completion bar character
-                         incomplete = "░", # Incomplete bar character
-                         current = "▒",    # Current bar character
-                         clear = FALSE,    # If TRUE, clears the bar when finish
-                         width = 100)      # Width of the progress bar
-  pb$tick()
-  
-  T_adapt <- 100 # Length of the adaptation cycle
+  pb <- initialize_progress_bar(T)
+  update_progress_bar(pb)
+  T_adapt <- 100
+  adaptation_config <- list(ac_rate_lower = .3, 
+                            ac_rate_upper = .4, 
+                            cycle_period = 50,
+                            ac_rate_span = 10,
+                            T_adapt = 100) # Length of the adaptation cycle
   
   Temperature  <- rep(core_temperature, 5) # Temperatures at which to run the chains
   N_chains <- length(Temperature) # Set the number of chains to the number of temperatures
   XXt <- t(X) %*% X # Precompute X'X
+  k <- ncol(X) # Number of predictors 
   
   # Mixture weights p
   eps_p <- rep(1, N_chains) # Proposition distribution variance
@@ -71,10 +66,6 @@ MixReg_factor <- function(T, X, Y, Tau, Alpha, ksi, beta_hat, core_temperature) 
   adapt_eps_beta <- FALSE
 
   
-  adaptation_config <- list(ac_rate_lower = .3, 
-                            ac_rate_upper = .4, 
-                            cycle_period = 50,
-                            ac_rate_span = 10)
   
   swap_config <- list(cycle_period = 1)
   
@@ -83,82 +74,43 @@ MixReg_factor <- function(T, X, Y, Tau, Alpha, ksi, beta_hat, core_temperature) 
     for (j in 1:N_chains) {
       temp <- Temperature[j]
       mu_XB <- X %*% Beta_chains[j, i, ]
-      
-      
       # Sample mixture weight
-      result <- sample_mixture_weight(P[j, i], eps_p[j], temp, etaPhi[j, i, ], sigma_sqrd[j, i], mu_XB, Tau, Y)
-      ac_rate_p[j,i] <- (if (i == 1) result$accept else (ac_rate_p[j,i-1]*(i-1)) + result$accept)/i
-      P[j, i + 1] <- result$p_next
+      result <- sample_mixture_weight(P[j, i], etaPhi[j, i, ], sigma_sqrd[j, i], mu_XB, Y, temp, eps_p[j], Tau)
+      ac_rate_p[j,i] <- (if (i == 1) result$accept else (ac_rate_p[j,i-1]*(i-1)) + result$accept) / i
+      P[j, i + 1] <- result$next_val
       if (check_adaptation(i, j, ac_rate_p, adaptation_config)){
-        adapt_eps_p <- TRUE
-        ac_rate_window <- numeric(adaptation_config$ac_rate_span)
-        P_adapt[1] <- result$p_next
-        for (t in 1:(T_adapt-1)){
-          result_adapt <- sample_mixture_weight(P_adapt[t], eps_p[j], temp, etaPhi[j, i, ], sigma_sqrd[j, i], mu_XB, Tau, Y)
-          P_adapt[t+1] <- result_adapt$p_next
-          ac_rate_window[t %% adaptation_config$ac_rate_span + 1] <- result_adapt$accept
-          if (t >= adaptation_config$ac_rate_span){ # Check if enough samples were accumulated
-            current_ac_rate <- sum(ac_rate_window) / adaptation_config$ac_rate_span
-            if (current_ac_rate < adaptation_config$ac_rate_lower) eps_p[j] <- eps_p[j]*1.1
-            else if (current_ac_rate > adaptation_config$ac_rate_upper) eps_p[j] <- eps_p[j]*0.8
-            }
-        }
-        adapt_eps_p <- FALSE
+        eps_p[j] = adapt_proposition(P[j, i+1], sample_mixture_weight, list(p_t=P[j,i+1],etaPhi_t=etaPhi[j, i, ], sigma_sqrd_t=sigma_sqrd[j, i], mu_XB=mu_XB, Y=Y, temp=temp, eps=eps_p[j]), "p_t", adaptation_config,Tau = Tau)
       }
+
       
       # Sample etaPhi
-      result <- sample_etaPhi(etaPhi[j, i, ], eps_etaPhi_sqrd[j], temp, P[j, i + 1], sigma_sqrd[j, i], mu_XB, Alpha, Y)
+      result <- sample_etaPhi(P[j, i + 1], etaPhi[j, i, ], sigma_sqrd[j, i], mu_XB, Y, temp, eps_etaPhi_sqrd[j], Alpha)
       ac_rate_etaPhi_sqrd[j,i] <- (if (i == 1) result$accept else (ac_rate_etaPhi_sqrd[j,i-1]*(i-1)) + result$accept) / i
-      etaPhi[j, i + 1, ] <- result$etaPhi_next
+      etaPhi[j, i + 1, ] <- result$next_val
       if (check_adaptation(i, j, ac_rate_etaPhi_sqrd, adaptation_config)){
-        adapt_eps_etaPhi_sqrd <- TRUE
-        ac_rate_window <- numeric(adaptation_config$ac_rate_span)
-        etaPhi_adapt[1, ] <- result$etaPhi_next
-        for (t in 1:(T_adapt-1)){
-          result_adapt <- sample_etaPhi(etaPhi_adapt[t,], eps_etaPhi_sqrd[j], temp, P[j, i + 1], sigma_sqrd[j, i], mu_XB, Alpha, Y)
-          etaPhi_adapt[t+1,] <- result_adapt$etaPhi_next
-          ac_rate_window[t %% adaptation_config$ac_rate_span + 1] <- result_adapt$accept
-          if (t >= adaptation_config$ac_rate_span){
-            current_ac_rate <- sum(ac_rate_window) / adaptation_config$ac_rate_span
-            if (current_ac_rate < adaptation_config$ac_rate_lower) eps_etaPhi_sqrd[j] <- eps_etaPhi_sqrd[j] + 100
-            else if (current_ac_rate > adaptation_config$ac_rate_upper) eps_etaPhi_sqrd[j] <- max(1, eps_etaPhi_sqrd[j]-100)
-          }
-        }
-        adapt_eps_etaPhi_sqrd <- FALSE
+        eps_etaPhi_sqrd[j] = adapt_proposition(etaPhi[j, i+1,], sample_etaPhi, list(p_t=P[j,i+1],etaPhi_t=etaPhi[j, i, ], sigma_sqrd_t=sigma_sqrd[j, i], mu_XB=mu_XB, Y=Y, temp=temp, eps=eps_etaPhi_sqrd[j]), "etaPhi_t", adaptation_config,Alpha = Alpha)
       }
       
+      
       # Sample standard deviation
-      result <- sample_sigma(sigma_sqrd[j, i], eps_sigma_sqrd[j], temp, P[j, i + 1], etaPhi[j, i + 1, ], mu_XB, ksi, Y)
-      sigma_sqrd[j, i + 1] <- result$sigma_sqrd_next
+      result <- sample_sigma(P[j, i + 1], etaPhi[j, i + 1, ], sigma_sqrd[j, i], mu_XB, Y, temp, eps_sigma_sqrd[j], ksi)
+      sigma_sqrd[j, i + 1] <- result$next_val
       ac_rate_sigma_sqrd[j,i] <- (if (i == 1) result$accept else (ac_rate_sigma_sqrd[j,i-1]*(i-1)) + result$accept) / i
       if (check_adaptation(i, j, ac_rate_sigma_sqrd, adaptation_config)){
-        adapt_eps_sigma_sqrd <- TRUE
-        ac_rate_window <- numeric(adaptation_config$ac_rate_span)
-        sigma_sqrd_adapt[j,1] <- result$sigma_sqrd_next
-        for (t in 1:(T_adapt-1)){
-          result_adapt <- sample_sigma(sigma_sqrd_adapt[j,t], eps_sigma_sqrd[j], temp, P[j, i + 1], etaPhi[j, i + 1, ], mu_XB, ksi, Y)
-          sigma_sqrd_adapt[j,t+1] <- result_adapt$sigma_sqrd_next
-          ac_rate_window[t %% adaptation_config$ac_rate_span + 1] <- result_adapt$accept
-          if (t >= adaptation_config$ac_rate_span){
-            current_ac_rate <- sum(ac_rate_window) / adaptation_config$ac_rate_span
-            if (current_ac_rate < adaptation_config$ac_rate_lower) eps_sigma_sqrd[j] <- eps_sigma_sqrd[j]*0.95
-            else if (current_ac_rate > adaptation_config$ac_rate_upper) eps_sigma_sqrd[j] <- max(1, eps_sigma_sqrd[j]*1.05)
-          }
-        }
-        adapt_eps_sigma_sqrd <- FALSE
+        eps_sigma_sqrd[j] = adapt_proposition(sigma_sqrd[j, i+1], sample_sigma, list(p_t=P[j,i+1],etaPhi_t=etaPhi[j, i + 1, ], sigma_sqrd_t=sigma_sqrd[j, i], mu_XB=mu_XB, Y=Y, temp=temp, eps=eps_sigma_sqrd[j]), "sigma_sqrd_t", adaptation_config, ksi = ksi)
       }
       
       # Sample beta
       result <- sample_beta(matrix(Beta_chains[j, i, ]), eps_beta[j], temp, P[j, i + 1], etaPhi[j, i + 1, ], sigma_sqrd[j, i + 1], beta_hat, beta_corr, X, XXt, Y)
-      Beta_chains[j, i + 1, ] <- result$beta_next
+      Beta_chains[j, i + 1, ] <- result$next_val
       ac_rate_beta[j,i] <- (if (i == 1) result$accept else (ac_rate_beta[j,i-1]*(i-1)) + result$accept) / i
       if (check_adaptation(i, j, ac_rate_beta, adaptation_config)){
         adapt_eps_beta <- TRUE
         ac_rate_window <- numeric(adaptation_config$ac_rate_span)
-        beta_adapt[1,] <- result$beta_next
+        beta_adapt[1,] <- result$next_val
         for (t in 1:(T_adapt-1)){
           result_adapt <- sample_beta(matrix(beta_adapt[t,]), eps_beta[j], temp, P[j, i + 1], etaPhi[j, i + 1, ], sigma_sqrd[j, i + 1], beta_hat, beta_corr, X, XXt, Y)
-          beta_adapt[t+1,] <- result_adapt$beta_next
+          beta_adapt[t+1,] <- result_adapt$next_val
           ac_rate_window[t %% adaptation_config$ac_rate_span + 1] <- result_adapt$accept
           if (t >= adaptation_config$ac_rate_span){
             current_ac_rate <- sum(ac_rate_window) / adaptation_config$ac_rate_span
@@ -179,7 +131,7 @@ MixReg_factor <- function(T, X, Y, Tau, Alpha, ksi, beta_hat, core_temperature) 
       Beta_chains[,i+1,] <- swap_result$Beta_chains_next
     }
     
-    pb$tick()  # Update progress bar
+    update_progress_bar(pb)  # Update progress bar
   }
   
   # Return results

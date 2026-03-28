@@ -20,7 +20,7 @@ Given covariates **X** (n × k) and a response **Y** (n × 1), the model is:
 Y_i ~ p · N(μ₁ᵢ, σ₁ᵢ²)  +  (1−p) · N(μ₂ᵢ, σ₂ᵢ²)
 ```
 
-where the component means and standard deviations are derived from a *factored* parameterisation:
+where the component means and standard deviations are derived from the parameterisation of [Kamary et al](https://doi.org/10.1080/10618600.2018.1438900):
 
 | Parameter | Description | Constraint |
 |-----------|-------------|------------|

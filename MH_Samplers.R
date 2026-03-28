@@ -2,26 +2,14 @@ source("Model.R")
 
 # Function to sample the mixture weight
 sample_mixture_weight <- function(p_t, etaPhi_t, sigma_sqrd_t, mu_XB, Y, temp, eps, Tau){
-  # cat("Called sample_mixture_weight with arguments \n")
-  # cat("p_t: ", p_t, "\n")
-  # cat("etaPhi_t: ", etaPhi_t, "\n")
-  # cat("sigma_sqrd_t: ", sigma_sqrd_t, "\n")
-  # cat("mu_XB: ", dim(mu_XB), "\n")
-  # cat("Y: ", dim(Y), "\n")
-  # cat("temp: ", temp, "\n")
-  # cat("eps_p: ", eps_p, "\n")
-  # cat("Tau: ", names(Tau), "\n")
-  
-  
-  
   p_prop <- rbeta(1, (p_t * eps) + 1, ((1 - p_t) * eps) + 1)
-  
   log_acceptance <- (temp * Log_post_p(p_prop, etaPhi_t, sqrt(sigma_sqrd_t), mu_XB, Tau, Y) +
                        dbeta(p_t, p_prop * eps + 1, (1 - p_prop) * eps + 1, log = TRUE)) -
     (temp * Log_post_p(p_t, etaPhi_t, sqrt(sigma_sqrd_t), mu_XB, Tau, Y) +
        dbeta(p_prop, p_t * eps + 1, (1 - p_t) * eps + 1, log = TRUE))
-  # cat("log_acceptance :", log_acceptance, "\n")
+  # cat("log_acceptance :", Log_post_p(p_prop, etaPhi_t, sqrt(sigma_sqrd_t), mu_XB, Tau, Y), "\n")
   s <-(runif(1) < min(1, exp(log_acceptance)))
+  
   return(list(next_val = ifelse(s, p_prop, p_t), accept=s))
 }
 
@@ -37,6 +25,7 @@ sample_etaPhi <- function(p_t, etaPhi_t, sigma_sqrd_t, mu_XB, Y, temp, eps, Alph
                ))
   coeff <- c(1,1,sample(c(-1,1),size = 1))
   etaPhi_prop <- coeff * sqrt(etaPhi_sqrd_prop)
+  # cat("etaPhi_prop :", etaPhi_prop, "\n")
   tmp1 <-
     c(
       etaPhi_sqrd_prop[1] * eps + 1,
@@ -52,7 +41,8 @@ sample_etaPhi <- function(p_t, etaPhi_t, sigma_sqrd_t, mu_XB, Y, temp, eps, Alph
     (
       temp*Log_post_etaPhi(p_t, etaPhi_prop, sqrt(sigma_sqrd_t), mu_XB, Alpha, Y) + ddirichlet(matrix(etaPhi_sqrd_t, nrow = 1), tmp1 , log = TRUE)
     ) - (temp*Log_post_etaPhi(p_t, etaPhi_t, sqrt(sigma_sqrd_t), mu_XB, Alpha, Y) + ddirichlet(matrix(etaPhi_sqrd_prop, nrow = 1), tmp2, log = TRUE))
-  s <-(runif(1) < min(1, exp(log_acceptance)))
+  s <-(runif(1) < min(1, exp(log_acceptance)))      
+  # cat("log_post :", Log_post_etaPhi(p_t, etaPhi_prop, sqrt(sigma_sqrd_t), mu_XB, Alpha, Y), "\n")
   if (s) next_val <- etaPhi_prop
   else next_val <- etaPhi_t
   
@@ -61,15 +51,15 @@ sample_etaPhi <- function(p_t, etaPhi_t, sigma_sqrd_t, mu_XB, Y, temp, eps, Alph
 
 # Function to sample standard deviation
 sample_sigma <- function(p_t, etaPhi_t, sigma_sqrd_t, mu_XB, Y, temp, eps_sigma_sqrd, ksi){
-  sigma_sqrd_prop <- rinvgamma(1, 2 + ((sigma_sqrd_t^2) / eps_sigma_sqrd), sigma_sqrd_t * (1 + (sigma_sqrd_t^2) / eps_sigma_sqrd))
+  sigma_sqrd_prop <- rinvgamma(1, 2 + ((sigma_sqrd_t^2) * eps_sigma_sqrd), sigma_sqrd_t * (1 + (sigma_sqrd_t^2)* eps_sigma_sqrd))
   
   log_acceptance <- (temp * Log_post_sigma(p_t, etaPhi_t, sqrt(sigma_sqrd_prop), mu_XB, ksi, Y) +
-                       dinvgamma(sigma_sqrd_t, 2 + ((sigma_sqrd_prop^2) / eps_sigma_sqrd), sigma_sqrd_prop * (1 + (sigma_sqrd_prop^2) / eps_sigma_sqrd), log = TRUE)) -
+                       dinvgamma(sigma_sqrd_t, 2 + ((sigma_sqrd_prop^2) * eps_sigma_sqrd), sigma_sqrd_prop * (1 + (sigma_sqrd_prop^2) * eps_sigma_sqrd), log = TRUE)) -
     (temp * Log_post_sigma(p_t, etaPhi_t, sqrt(sigma_sqrd_t), mu_XB, ksi, Y) +
-       dinvgamma(sigma_sqrd_prop, 2 + ((sigma_sqrd_t^2) / eps_sigma_sqrd), sigma_sqrd_t * (1 + (sigma_sqrd_t^2) / eps_sigma_sqrd), log = TRUE))
+       dinvgamma(sigma_sqrd_prop, 2 + ((sigma_sqrd_t^2) * eps_sigma_sqrd), sigma_sqrd_t * (1 + (sigma_sqrd_t^2) * eps_sigma_sqrd), log = TRUE))
   
   s <- (runif(1) < min(1, exp(log_acceptance)))
-
+  # cat(log_acceptance, "\n")
   return(list(next_val=(ifelse(s, sigma_sqrd_prop, sigma_sqrd_t)), accept=s))
 }
 

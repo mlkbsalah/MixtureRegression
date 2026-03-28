@@ -1,0 +1,97 @@
+---
+title: "sprint_multimixreg"
+output: html_document
+---
+
+```{r}
+source("generate_test.R")
+source("FactoredMixReg.R")
+source("utilities.R")
+library("gridExtra")
+```
+
+```{r}
+data = generate_test(n_obs = 3000, 
+                     k_var = 4,
+                     add_intercept = TRUE)
+X = data$X
+Y = data$Y
+beta = data$beta
+etaphi = data$etaphi
+
+ggplot()+
+    geom_histogram(aes(Y), fill = "blue", bins = 100) +
+    ggtitle("Histogram of Y")
+```
+
+```{r}
+Tau <- list("tau1"=.5, "tau2"=.5) # Mixture weights
+Alpha <- c(.5,.5,.5) # eta1, eta2, phi
+ksi <- list("shape"=1.5, "rate"=2) # Standard deviation
+beta_MLE <- solve(t(X)%*%X)%*%t(X)%*%Y
+beta_hat <- matrix(beta_MLE, ncol = 1) # Mean 
+```
+
+```{r}
+T = 10000 # Sampling epochs
+N_chains <- 10
+```
+
+```{r}
+set.seed(1999)
+source("FactoredMixReg.R")
+L = MixReg_factor(T, X, Y, Tau, Alpha, ksi, beta_hat, 1, N_chains)
+```
+
+```{r}
+p1 <- ggplot_overlapping_histograms(L$P, n_breaks = 200,alpha = 0.5, title = "Histogram per MC")
+p2 <- ggplot_overlapping_lines(L$P, title = "Simulated value per iteration")
+p3 <- ggplot_overlapping_lines(L$ac_rate_etaPhi_sqrd,title = "Acceptance Rate etaphi")
+p4 <- ggplot_overlapping_lines(L$ac_rate_p, title="Acceptance rate p")
+grid.arrange(p3,p4,p1,p2,ncol=2)
+```
+
+```{r}
+plots <- list()
+name <- c("eta1", "eta2", "phi")
+for (i in 1:3){
+ plots[[2*(i-1)+1]] <- ggplot_overlapping_histograms(L$etaPhi[,,i],
+                                            n_breaks = 200,
+                                            title = paste("Histogram:", name[i]))
+ plots[[2*i]] <- ggplot_overlapping_lines(L$etaPhi[,,i], 
+                                         title = paste("Line plot:", name[i]))
+ }
+grid.arrange(grobs = plots, 
+           layout_matrix = rbind(c(1,2),
+                                 c(3,4),
+                                 c(5,6)
+           ))
+```
+
+```{r}
+plot <- list()
+plot[[1]] <- ggplot_overlapping_histograms(L$sigma_sqrd, title = "sigma squared histogram")
+plot[[2]] <- ggplot_overlapping_lines(L$sigma_sqrd, title = "sigma squared chains")
+plot[[3]] <- ggplot_overlapping_lines(L$ac_rate_sigma_sqrd,title = "acceptance rate sigma squared")
+grid.arrange(grobs=plot,
+             layout_matrix = rbind(c(1,2),
+                                   c(3,3)
+                                   ))
+```
+
+```{r}
+name <- paste0("beta_", 1:dim(L$Beta_chains)[3])
+plot <- list()
+for (i in 1:dim(L$Beta_chains)[3])
+  plot[[i]] <- ggplot_overlapping_lines(L$Beta_chains[,,i], title = name[i])
+grid.arrange(grobs=plot)
+```
+
+```{r}
+name <- paste0("beta_", 1:dim(L$Beta_chains)[3])
+plot <- list()
+for (i in 1:dim(L$Beta_chains)[3])
+  plot[[i]] <- ggplot_overlapping_histograms(L$Beta_chains[,,i], n_breaks = 100, title = name[i])
+grid.arrange(grobs=plot)
+```
+

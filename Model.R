@@ -1,4 +1,8 @@
 Log_lik <- function(p, etaPhi, sigma, mu_XB, Y){
+  # cat("p", p, "\n")
+  # cat("etaPhi", etaPhi, "\n")
+  # cat("sigma", sigma, "\n")
+  
   # Precompute sqrt terms
   sqrt_p <- sqrt(p)
   sqrt_1_p <- sqrt(1 - p)
@@ -11,22 +15,38 @@ Log_lik <- function(p, etaPhi, sigma, mu_XB, Y){
   
   # Vectorized calculation of log likelihood
   res <- sum(log(p * dnorm(Y, mu1, sigma1) + (1 - p) * dnorm(Y, mu2, sigma2)))
+  # cat("res", res, "\n")
   
-  log_res1 <- log(p) + dnorm(Y, mu1, sigma1, log = TRUE)
-  log_res2 <- log1p(-p) + dnorm(Y, mu2, sigma2, log = TRUE)
+  # cat(p * dnorm(Y, mu1, sigma1) + (1 - p) * dnorm(Y, mu2, sigma2))
   
-  # Apply the log-sum-exp trick
-  max_log_res <- pmax(log_res1, log_res2)
-  res <- sum(max_log_res + log(exp(log_res1 - max_log_res) + exp(log_res2 - max_log_res)))
-  
+
+  # log_res1 <- log(p) + dnorm(Y, mu1, sigma1, log = TRUE)
+  # log_res2 <- log1p(-p) + dnorm(Y, mu2, sigma2, log = TRUE)
+  # 
+  # # Apply the log-sum-exp trick
+  # max_log_res <- pmax(log_res1, log_res2)
+  # res <- sum(max_log_res + log(exp(log_res1 - max_log_res) + exp(log_res2 - max_log_res)))
+  # 
   return(res)
 }
 
 Log_post_p <- function(p_val, etaPhi_val, sigma_val, mu_XB, Tau, Y_val) {
+  # cat("\tp_val :", p_val, "\n")
+  # cat("\tetaPhi_val :", etaPhi_val, "\n")
+  # cat("\tsigma_val :", sigma_val, "\n")
+  # # cat("mu_XB :", mu_XB, "\n")
+  # cat("\tTau :", Tau$tau1, " ", Tau$tau2, "\n")
+  # cat("Likelihood, ", Log_lik(p_val, etaPhi_val, sigma_val, mu_XB, Y_val))
+  
   return(Log_lik(p_val, etaPhi_val, sigma_val, mu_XB, Y_val) + dbeta(p_val, Tau$tau1, Tau$tau2, log = TRUE))
 }
 
 Log_post_etaPhi <- function(p_val, etaPhi_val, sigma_val, mu_XB, Alpha, Y_val){
+  # cat("\tp_val :", p_val, "\n")
+  # cat("\tetaPhi_val :", etaPhi_val, "\n")
+  # cat("\tsigma_val :", sigma_val, "\n")
+  # # cat("mu_XB :", mu_XB, "\n")
+  # cat("\tAlpha :", Alpha, "\n")
   return(Log_lik(p_val, etaPhi_val, sigma_val, mu_XB, Y_val) + ddirichlet(matrix(etaPhi_val^2, nrow = 1), Alpha, log = TRUE))
 }
 
